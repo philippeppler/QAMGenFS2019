@@ -26,6 +26,8 @@ struct SLDP_t_class
 void vProtokollHandlerTask( void *pvParameters );
 
 uint8_t xCRC_calc( uint8_t uiCRC, uint8_t uiCRC_data );
+//uint8_t xFillOutputBuffer( ALDP_t_class *xALDP_Paket, SLDP_t_class *xSLDP_Paket, uint16_t Preamble );
+//void xWriteToOutputBuffer( uint8_t data );
 
 
 

@@ -229,7 +229,7 @@ void vMenu(void *pvParameters) {
 			if (ucMode == 2)
 			{
 				vDisplayWriteStringAtPos(0,0,"QAM Data");
-				if(xQueueReceive(xData,&ucData_to_send,(TickType_t)100))
+				if(xQueueReceive(xALDPQueue,&ucData_to_send,(TickType_t)100))
 				{
 					vDisplayWriteStringAtPos(1,0,"Data: %d", ucData_to_send);
 				}
@@ -349,9 +349,9 @@ void vIMU(void *pvParameters) {
 			ucData_Accel_y_negativ = 0;
 		}
 		ucData_to_send = (ucData_Accel_y_negativ<<6)|(ucData_Accel_y_positiv<<4)|(ucData_Accel_x_negativ<<2) | ucData_Accel_x_positiv;
-		if (uxQueueMessagesWaiting(xData)< 2)
+		if (uxQueueMessagesWaiting(xALDPQueue)< 2)
 		{
-			xQueueSendToBack(xData,&ucData_to_send,portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue,&ucData_to_send,portMAX_DELAY);
 		}
 		vTaskDelay(2 / portTICK_RATE_MS);
 	}
@@ -371,9 +371,9 @@ void vTestpattern(void *pvParameters){
 	vTaskSuspend(xTestpattern);
 	for(;;) {
 		
-		if (uxQueueMessagesWaiting(xData)< 2)
+		if (uxQueueMessagesWaiting(xALDPQueue)< 2)
 		{
-			xQueueSendToBack(xData,&ucTestpattern,portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue,&ucTestpattern,portMAX_DELAY);
 		}
 		vTaskDelay(2 / portTICK_RATE_MS);
 	}
@@ -394,9 +394,9 @@ void vUART(void *pvParameters) {
 	for(;;) {
 		
 		xEventGroupWaitBits(xSettings,SETTING_SOURCE_BIT1,pdFALSE,pdFALSE,portMAX_DELAY);
-		if (uxQueueMessagesWaiting(xData)< 2)
+		if (uxQueueMessagesWaiting(xALDPQueue)< 2)
 		{
-			xQueueSendToBack(xData,&ucUART,portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue,&ucUART,portMAX_DELAY);
 		}
 	}
 */

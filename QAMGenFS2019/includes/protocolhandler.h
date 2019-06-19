@@ -9,6 +9,13 @@
 #ifndef PROTOKOLLHANDLER_H_
 #define PROTOKOLLHANDLER_H_
 
+/* Constants */
+#define ANZSENDQUEUE					32							// according to document "ProtokollBeschreibung.pdf" from Claudio
+#define	PROTOCOLBUFFERSIZE				32
+
+xQueueHandle xALDPQueue;								// Data to pack and send
+
+
 struct ALDP_t_class
 {
 	uint8_t aldp_hdr_byte_1;
@@ -26,8 +33,6 @@ struct SLDP_t_class
 void vProtokollHandlerTask( void *pvParameters );
 
 uint8_t xCRC_calc( uint8_t uiCRC, uint8_t uiCRC_data );
-uint8_t xFillOutputBuffer(struct ALDP_t_class *xALDP_Paket,struct SLDP_t_class *xSLDP_Paket, uint16_t Preamble);
-void xWriteToOutputBuffer(uint8_t data);
 
 
 

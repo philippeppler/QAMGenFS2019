@@ -18,6 +18,7 @@
  #include "event_groups.h"
  #include "queue.h"
  #include "semphr.h"
+ #include "protocolhandler.h"
 
 
 #define STATUS_ERROR				1<<0

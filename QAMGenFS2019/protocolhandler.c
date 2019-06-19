@@ -14,9 +14,6 @@
 #include "string.h"
 #include "semphr.h"
 
-/* Constants */
-#define ANZSENDQUEUE					32							// according to document "ProtokollBeschreibung.pdf" from Claudio
-#define	PROTOCOLBUFFERSIZE				32
 /* xQuelle */
 #define PAKET_TYPE_ALDP					0x01
 #define ALDP_SRC_UART					0x00
@@ -37,13 +34,10 @@
 #define ACTIVEBUFFER_A					0
 #define ACTIVEBUFFER_B					1
 
-#define GLOBAL_SLDP_PREAMBLE			0x55A1
-
 EventGroupHandle_t xSettings;							// Settings from GUI
 EventGroupHandle_t xStatus;								// something from Cedi
 
 
-xQueueHandle xALDPQueue;								// Data to pack and send
 
 SemaphoreHandle_t xGlobalProtocolBuffer_A_Key;			//A-Resource for ucGlobalProtocolBuffer_A
 SemaphoreHandle_t xGlobalProtocolBuffer_B_Key;			//A-Resource for ucGlobalProtocolBuffer_B
@@ -51,20 +45,27 @@ SemaphoreHandle_t xGlobalProtocolBuffer_B_Key;			//A-Resource for ucGlobalProtoc
 /* global variables */
 uint8_t ucglobalProtocolBuffer_A[ PROTOCOLBUFFERSIZE ] = {};
 uint8_t ucglobalProtocolBuffer_B[ PROTOCOLBUFFERSIZE ] = {};
-uint8_t ucActualBufferPos = 0;
 
-uint8_t xFillOutputBuffer(struct ALDP_t_class *xALDP_Paket,struct SLDP_t_class *xSLDP_Paket, uint16_t Preamble);
-void xWriteToOutputBuffer(uint8_t data);
-
-volatile uint8_t ucActiveBuffer = ACTIVEBUFFER_A;
 
 void vProtokollHandlerTask( void *pvParameters ) {
 	(void) pvParameters;
 	
 	struct ALDP_t_class *xALDP_Paket;
 	struct SLDP_t_class xSLDP_Paket;
+	
+/* Debugging
+	PORTF.DIRSET = PIN0_bm;		
+	PORTF.OUT = 0x01;
+*/	
 
-	xALDPQueue = xQueueCreate( ANZSENDQUEUE, sizeof(&xALDP_Paket) );
+
+	
+	uint8_t	ucbuffercounter = 0;
+	
+	uint8_t ucProtocolBuffer_A_Counter = 1;
+	uint8_t ucProtocolBuffer_B_Counter = 1;
+	
+	uint8_t ucActiveBuffer = ACTIVEBUFFER_A;
 
 	xGlobalProtocolBuffer_A_Key = xSemaphoreCreateMutex();
 	xGlobalProtocolBuffer_B_Key = xSemaphoreCreateMutex();
@@ -75,54 +76,119 @@ void vProtokollHandlerTask( void *pvParameters ) {
 	for(;;) {
 		
 		
-/*	Debbuging */
-			struct ALDP_t_class a;
+/*	Debbuging
+			PORTF.OUTTGL = 0x01;
+			uint8_t a = 10;
+			uint8_t b = 20;
+			uint8_t c = 30;
+			uint8_t d = 40;
+			uint8_t e = 50;
 			
-			a.aldp_hdr_byte_1 = 1;
-			a.aldp_hdr_byte_2 = 3;
-			a.aldp_payload[0] = 10;
-			a.aldp_payload[1] = 20;
-			a.aldp_payload[2] = 30;
+			xQueueSendToBack(xALDPQueue, &a, portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue, &b, portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue, &c, portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue, &d, portMAX_DELAY);
+			xQueueSendToBack(xALDPQueue, &e, portMAX_DELAY);
+*/
 			
-			xQueueSend(xALDPQueue, &a, portMAX_DELAY);
-
+		if (uxQueueMessagesWaiting( xALDPQueue ) > 0) {
 			
-/* we wait maximum 10ms for new pakets to become available */ 
-		if(xQueueReceive(xALDPQueue,&xALDP_Paket,10/portTICK_RATE_MS))
-		{
-			/* Store the sldp size as length of the aldp payload plus its two header bytes */
-			xSLDP_Paket.sldp_size = xALDP_Paket->aldp_hdr_byte_2+2;
-		
-			/* First calculate the sizebyte of the SLDP Paket */
-			xSLDP_Paket.sldp_crc8 = xCRC_calc(0x00,xSLDP_Paket.sldp_size);
-		
-			/* Now calculate all Bytes from the xALDP Paket, including its size byte and the first header. 
-			   this leads us to +2 */
-			for ( uint8_t i = 0; i <= xALDP_Paket->aldp_hdr_byte_2 + 2; i++ ) {
-				xSLDP_Paket.sldp_crc8 = xCRC_calc(xSLDP_Paket.sldp_crc8, xALDP_Paket->aldp_payload[i] );
-			} 
-
-			/* now we have all neccessary informations to fill up our output buffer. 
-		
-			   - We have got a ALDP paket, filled up with sensor informations, directly from the queue
-			   - We have created a SLDP paket, filled up with size and CRC informations. 
-			   - We know our preamble. */
-		
-			/* We dont have to check to which buffer we must send our data. Everyhthing gets handled in the xWriteToOutputBuffer */
-			xFillOutputBuffer(xALDP_Paket,&xSLDP_Paket,GLOBAL_SLDP_PREAMBLE);
-		 
-		}
-		else
-		{
-			/* We did not received any ALDP Pakets during our timeout time. 
-			   Therefore we mark our Buffer to be ready to send if we got any data in them!*/
-			if(ucActualBufferPos > 0)
-			{
-				if(ucActiveBuffer == ACTIVEBUFFER_A) xSemaphoreGive(xGlobalProtocolBuffer_A_Key);
-				else xSemaphoreGive(xGlobalProtocolBuffer_B_Key);
-				ucActualBufferPos = 0;
+/* save data from Queue into Buffer */
+			ucbuffercounter = 2;
+			uint8_t xSendQueueBuffer[ uxQueueMessagesWaiting( xALDPQueue ) + 2 ];
+						
+			while( ( uxQueueMessagesWaiting( xALDPQueue ) > 0 ) && (ucbuffercounter < ANZSENDQUEUE ) ) {
+				uint8_t xoutBufferPointer;
+				xQueueReceive( xALDPQueue, &xoutBufferPointer , portMAX_DELAY );					 
+				xSendQueueBuffer[ ucbuffercounter ] = xoutBufferPointer;
+				ucbuffercounter++;
 			}
+/* ALDP Source in byte 1 */
+			if( ( xEventGroupGetBits( xSettings ) & Settings_Source_Bit1 ) ) {
+				if( ( xEventGroupGetBits( xSettings ) & Settings_Source_Bit1 ) ) {
+					// UART
+					xSendQueueBuffer [0 ] = ALDP_SRC_UART;
+				}
+				else {
+					// Testpattern
+					xSendQueueBuffer[ 0 ] = ALDP_SRC_TEST;
+				}
+			}
+			else {
+				if( ( xEventGroupGetBits( xSettings ) & Settings_Source_Bit1 ) ) {
+					// I2C
+					xSendQueueBuffer[ 0 ] = ALDP_SRC_I2C;
+				}
+				else {
+					// n.a. (Error)
+					xSendQueueBuffer[ 0 ] = ALDP_SRC_ERROR;
+				}
+			}
+
+/* ALDP Size in byte 2 */
+			xSendQueueBuffer[ 1 ] = ucbuffercounter-2;		
+				
+
+/* ALDP and SLDP */			
+			xSLDP_Paket.sldp_size = sizeof( xSendQueueBuffer );
+			xSLDP_Paket.sldp_payload = &xSendQueueBuffer[ 0 ];
+			xALDP_Paket = ( struct ALDP_t_class * ) xSLDP_Paket.sldp_payload;		
+			
+			uint8_t ucOutBuffer[ xSLDP_Paket.sldp_size + 2 ];
+			ucOutBuffer[ 0 ] = xSLDP_Paket.sldp_size;
+
+			for(uint8_t i = 0; i != xSLDP_Paket.sldp_size; i++ )	{
+				ucOutBuffer[ i + 1 ] = xSLDP_Paket.sldp_payload[ i ];
+			}
+
+/* calculating CRC8 */			
+			xSLDP_Paket.sldp_crc8 = 0;
+			for ( uint8_t i = 0; i <= xSLDP_Paket.sldp_size; i++ ) {
+				xSLDP_Paket.sldp_crc8 = xCRC_calc(xSLDP_Paket.sldp_crc8, ucOutBuffer[ i ] );
+			}
+
+			ucOutBuffer[ xSLDP_Paket.sldp_size + 1 ] = xSLDP_Paket.sldp_crc8;			
+			
+			
+/* Sendbuffer-handler */
+			/* Buffer A overflow? => Buffer switch from A to B */
+			if( ( ucActiveBuffer == ACTIVEBUFFER_A ) && ( ( ucProtocolBuffer_A_Counter + xSLDP_Paket.sldp_size + 2 ) > PROTOCOLBUFFERSIZE ) ) {	
+					ucActiveBuffer = ACTIVEBUFFER_B;
+					ucProtocolBuffer_B_Counter = 1;	
+					xSemaphoreGive(xGlobalProtocolBuffer_A_Key);	
+					xSemaphoreTake( xGlobalProtocolBuffer_B_Key, portMAX_DELAY );
+			}
+			/* Buffer B overflow? => Buffer switch from B to A */
+			if( ( ucActiveBuffer == ACTIVEBUFFER_B ) && ( ( ucProtocolBuffer_B_Counter + xSLDP_Paket.sldp_size + 2 ) > PROTOCOLBUFFERSIZE ) ) {
+					ucActiveBuffer = ACTIVEBUFFER_A;	
+					ucProtocolBuffer_A_Counter = 1;
+					xSemaphoreGive(xGlobalProtocolBuffer_B_Key);
+					xSemaphoreTake( xGlobalProtocolBuffer_A_Key, portMAX_DELAY );
+			}
+
+	
+	
+/* Copy Data into global Sendbuffer */
+/* Todo: harmonize these by outsourcing in a seperate function*/	
+			
+			if( ucActiveBuffer == ACTIVEBUFFER_A ) {
+				memcpy( ucglobalProtocolBuffer_A + ucProtocolBuffer_A_Counter, ucOutBuffer, sizeof( ucOutBuffer ) );				// copy the Data into Buffer A
+				ucglobalProtocolBuffer_A[0] = ucProtocolBuffer_A_Counter+xSLDP_Paket.sldp_size + 2;
+				ucProtocolBuffer_A_Counter += xSLDP_Paket.sldp_size + 2;
+				
+			}
+			
+			else if( ucActiveBuffer == ACTIVEBUFFER_B ) {
+				memcpy( ucglobalProtocolBuffer_B + ucProtocolBuffer_B_Counter, ucOutBuffer, sizeof(ucOutBuffer ) );			// copy the Data into Buffer B
+				ucglobalProtocolBuffer_B[ 0 ] = ucProtocolBuffer_B_Counter+xSLDP_Paket.sldp_size + 2;
+				ucProtocolBuffer_B_Counter += xSLDP_Paket.sldp_size + 2;
+			}
+			
 		}
+		else {
+			vTaskDelay( 100 / portTICK_RATE_MS );				// Delay 100ms (collecting data to send)
+		}
+
 	}
 }
 
@@ -151,57 +217,3 @@ uint8_t xCRC_calc( uint8_t uiCRC, uint8_t uiCRC_data )
 	return(uiCRC);
 }
 	
-uint8_t xFillOutputBuffer(struct ALDP_t_class *xALDP_Paket,struct SLDP_t_class *xSLDP_Paket, uint16_t Preamble)
-{
-	uint8_t i = 0;
-	
-	/* First we always write our preamble */
-	xWriteToOutputBuffer(Preamble & 0x00FF);
-	xWriteToOutputBuffer(Preamble & 0xFF00 >> 8);
-	
-	/* After the Preamble, we must write the Header of the SLDP Paket. This is, the size-byte*/
-	xWriteToOutputBuffer(xSLDP_Paket->sldp_size);
-	
-	/* Now from here, there is the ALDP Paket information.*/
-	xWriteToOutputBuffer(xALDP_Paket->aldp_hdr_byte_1);
-	xWriteToOutputBuffer(xALDP_Paket->aldp_hdr_byte_2);
-	
-	/* For the payload, we will use memcopy*/
-	while(i!=xALDP_Paket->aldp_hdr_byte_2)
-	{
-		xWriteToOutputBuffer(xALDP_Paket->aldp_payload[i]);
-		i++;
-	}
-	
-	/* Now we have written all neccessary Data into our outputbuffer. Except for the crc byte. */
-	xWriteToOutputBuffer(xSLDP_Paket->sldp_crc8);
-	
-	/*We have finished the writing into the buffer and return the ammount of written bytes.*/
-	return 4 + xALDP_Paket->aldp_hdr_byte_2 + 2;	
-}
-
-void xWriteToOutputBuffer(uint8_t data)
-{
-	/* Check if we hit the Protocollbuffersize constraint. */
-	if(ucActualBufferPos == PROTOCOLBUFFERSIZE)
-	{
-		/* If we hit the limit, then we mark the buffer to be ready to send
-		   we also change to the next buffer and reset our counter to zero.*/
-		if(ucActiveBuffer == ACTIVEBUFFER_A) 
-		{
-			ucActiveBuffer = ACTIVEBUFFER_B;
-			xSemaphoreGive(xGlobalProtocolBuffer_A_Key);
-		}
-		else
-		{
-			ucActiveBuffer = ACTIVEBUFFER_A;
-			xSemaphoreGive(xGlobalProtocolBuffer_B_Key);			
-		}
-		ucActualBufferPos = 0;
-	}
-	
-	/* Copy the incoming data to the appropriate buffer */
-	if(ucActiveBuffer == ACTIVEBUFFER_A) ucglobalProtocolBuffer_A[ucActualBufferPos] = data;
-	else ucglobalProtocolBuffer_B[ucActualBufferPos] = data;
-	ucActualBufferPos++;
-}
